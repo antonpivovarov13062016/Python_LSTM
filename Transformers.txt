@@ -1,0 +1,114 @@
+Нейронные сети на основе трансформеров (Transformers) могут быть использованы для прогнозирования временных рядов. Трансформеры особенно полезны для обработки данных с длинными зависимостями, где важно учитывать контекст не только ближайших данных, но и более отдаленных временных точек.
+
+Ниже приведен пример кода для использования трансформеров в прогнозировании временных рядов с использованием библиотеки TensorFlow/Keras.
+
+pip install tensorflow numpy matplotlib scikit-learn
+Пример кода:
+python
+Копировать код
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.model_selection import train_test_split
+import tensorflow as tf
+from tensorflow.keras.layers import Dense, LayerNormalization, MultiHeadAttention, Dropout, Input, Embedding
+from tensorflow.keras.models import Model
+
+# Генерация или загрузка данных
+# Предположим, что данные о температуре хранятся в массиве temperatures
+np.random.seed(42)
+temperatures = np.random.uniform(low=-10, high=30, size=(72,))
+
+# Масштабирование данных
+scaler = MinMaxScaler(feature_range=(0, 1))
+scaled_temperatures = scaler.fit_transform(temperatures.reshape(-1, 1))
+
+# Создание временных окон
+def create_dataset(data, time_steps=5):
+    X, y = [], []
+    for i in range(len(data) - time_steps):
+        X.append(data[i:(i + time_steps), 0])
+        y.append(data[i + time_steps, 0])
+    return np.array(X), np.array(y)
+
+time_steps = 5
+X, y = create_dataset(scaled_temperatures, time_steps)
+
+# Добавляем размерность для модели (samples, time_steps, features)
+X = np.reshape(X, (X.shape[0], X.shape[1], 1))
+
+# Разделение на обучающую и тестовую выборки
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# Определение трансформера
+class TransformerBlock(tf.keras.layers.Layer):
+    def __init__(self, embed_dim, num_heads, ff_dim, rate=0.1):
+        super(TransformerBlock, self).__init__()
+        self.att = MultiHeadAttention(num_heads=num_heads, key_dim=embed_dim)
+        self.ffn = tf.keras.Sequential(
+            [Dense(ff_dim, activation="relu"), Dense(embed_dim)]
+        )
+        self.layernorm1 = LayerNormalization(epsilon=1e-6)
+        self.layernorm2 = LayerNormalization(epsilon=1e-6)
+        self.dropout1 = Dropout(rate)
+        self.dropout2 = Dropout(rate)
+
+    def call(self, inputs, training):
+        attn_output = self.att(inputs, inputs)
+        attn_output = self.dropout1(attn_output, training=training)
+        out1 = self.layernorm1(inputs + attn_output)
+        ffn_output = self.ffn(out1)
+        ffn_output = self.dropout2(ffn_output, training=training)
+        return self.layernorm2(out1 + ffn_output)
+
+# Построение модели на основе трансформера
+def build_transformer_model(time_steps, num_features, embed_dim=64, num_heads=4, ff_dim=128, num_transformer_blocks=1, rate=0.1):
+    inputs = Input(shape=(time_steps, num_features))
+    
+    # Эмбеддинг
+    x = Dense(embed_dim)(inputs)
+    
+    # Трансформер блоки
+    for _ in range(num_transformer_blocks):
+        x = TransformerBlock(embed_dim, num_heads, ff_dim, rate)(x)
+    
+    # Финальный плотный слой
+    x = Dense(1)(x)
+    
+    # Прогнозирование только последнего шага
+    outputs = x[:, -1, :]
+    
+    model = Model(inputs=inputs, outputs=outputs)
+    model.compile(optimizer='adam', loss='mse')
+    return model
+
+# Параметры модели
+embed_dim = 64  # Размерность эмбеддингов
+num_heads = 4  # Число голов для многоголовой самовнимательности
+ff_dim = 128  # Размерность скрытого слоя
+num_transformer_blocks = 1  # Число блоков трансформера
+
+model = build_transformer_model(time_steps, 1, embed_dim, num_heads, ff_dim, num_transformer_blocks)
+
+# Обучение модели
+history = model.fit(X_train, y_train, epochs=20, batch_size=16, validation_data=(X_test, y_test))
+
+# Прогнозирование
+y_pred = model.predict(X_test)
+
+# Инвертирование масштабирования для получения исходных значений
+y_pred_inverse = scaler.inverse_transform(y_pred.reshape(-1, 1))
+y_test_inverse = scaler.inverse_transform(y_test.reshape(-1, 1))
+
+# Визуализация результатов
+plt.plot(y_test_inverse, label='Actual')
+plt.plot(y_pred_inverse, label='Predicted')
+plt.title('Temperature Prediction with Transformer')
+plt.legend()
+plt.show()
+Основные шаги:
+Подготовка данных: масштабирование данных и создание временных окон.
+Трансформер: создается кастомный блок трансформера с многоголовой самовнимательностью и нормализацией слоев.
+Модель: архитектура модели включает несколько слоев трансформеров и выходной слой для прогнозирования.
+Обучение: модель обучается на данных, после чего выполняется прогноз и визуализируются результаты.
+Этот код можно адаптировать для любых временных рядов, в том числе для температуры, используя временные шаги для прогнозирования будущих значений.

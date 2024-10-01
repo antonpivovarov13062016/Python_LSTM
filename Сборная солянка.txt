@@ -1,0 +1,141 @@
+pip install tensorflow numpy matplotlib scikit-learn statsmodels
+Код:
+python
+Копировать код
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.metrics import mean_absolute_percentage_error
+from sklearn.model_selection import train_test_split
+import tensorflow as tf
+from tensorflow.keras.models import Sequential, Model
+from tensorflow.keras.layers import Dense, Conv1D, Flatten, GRU, LSTM, Dropout, Input, LayerNormalization, MultiHeadAttention
+from statsmodels.tsa.statespace.sarimax import SARIMAX
+
+# Генерация или загрузка данных
+np.random.seed(42)
+temperatures = np.random.uniform(low=-10, high=30, size=(72,))
+
+# Масштабирование данных
+scaler = MinMaxScaler(feature_range=(0, 1))
+scaled_temperatures = scaler.fit_transform(temperatures.reshape(-1, 1))
+
+# Создание временных окон
+def create_dataset(data, time_steps=5):
+    X, y = [], []
+    for i in range(len(data) - time_steps):
+        X.append(data[i:(i + time_steps), 0])
+        y.append(data[i + time_steps, 0])
+    return np.array(X), np.array(y)
+
+time_steps = 5
+X, y = create_dataset(scaled_temperatures, time_steps)
+
+# Разделение на обучающую и тестовую выборки
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# SARIMA Модель
+def sarima_forecast(train, test):
+    model = SARIMAX(train, order=(1, 1, 1), seasonal_order=(1, 1, 1, 12))
+    model_fit = model.fit(disp=False)
+    predictions = model_fit.predict(start=len(train), end=len(train)+len(test)-1, dynamic=False)
+    return predictions
+
+# CNN Модель
+def cnn_model(input_shape):
+    model = Sequential()
+    model.add(Conv1D(64, kernel_size=2, activation='relu', input_shape=input_shape))
+    model.add(Dropout(0.2))
+    model.add(Flatten())
+    model.add(Dense(1))
+    model.compile(optimizer='adam', loss='mse')
+    return model
+
+# GRU Модель
+def gru_model(input_shape):
+    model = Sequential()
+    model.add(GRU(50, input_shape=input_shape))
+    model.add(Dropout(0.2))
+    model.add(Dense(1))
+    model.compile(optimizer='adam', loss='mse')
+    return model
+
+# LSTM с Attention Модель
+class TransformerBlock(tf.keras.layers.Layer):
+    def __init__(self, embed_dim, num_heads, ff_dim, rate=0.1):
+        super(TransformerBlock, self).__init__()
+        self.att = MultiHeadAttention(num_heads=num_heads, key_dim=embed_dim)
+        self.ffn = tf.keras.Sequential([Dense(ff_dim, activation="relu"), Dense(embed_dim)])
+        self.layernorm1 = LayerNormalization(epsilon=1e-6)
+        self.layernorm2 = LayerNormalization(epsilon=1e-6)
+        self.dropout1 = Dropout(rate)
+        self.dropout2 = Dropout(rate)
+
+    def call(self, inputs, training):
+        attn_output = self.att(inputs, inputs)
+        attn_output = self.dropout1(attn_output, training=training)
+        out1 = self.layernorm1(inputs + attn_output)
+        ffn_output = self.ffn(out1)
+        ffn_output = self.dropout2(ffn_output, training=training)
+        return self.layernorm2(out1 + ffn_output)
+
+def build_transformer_model(input_shape, embed_dim=64, num_heads=4, ff_dim=128):
+    inputs = Input(shape=input_shape)
+    x = Dense(embed_dim)(inputs)
+    transformer_block = TransformerBlock(embed_dim, num_heads, ff_dim)
+    x = transformer_block(x)
+    x = Dense(1)(x)
+    outputs = x[:, -1, :]
+    model = Model(inputs=inputs, outputs=outputs)
+    model.compile(optimizer='adam', loss='mse')
+    return model
+
+# Обучение и предсказание для каждой модели
+def train_and_predict(model, X_train, X_test, y_train, y_test, epochs=20):
+    history = model.fit(X_train, y_train, epochs=epochs, batch_size=16, validation_data=(X_test, y_test), verbose=0)
+    y_pred = model.predict(X_test)
+    return y_pred
+
+# Прогнозирование по SARIMA
+y_pred_sarima = sarima_forecast(y_train, y_test)
+y_pred_sarima = scaler.inverse_transform(y_pred_sarima.reshape(-1, 1))
+
+# Прогнозирование по CNN
+cnn = cnn_model((time_steps, 1))
+y_pred_cnn = train_and_predict(cnn, X_train, X_test, y_train, y_test)
+y_pred_cnn = scaler.inverse_transform(y_pred_cnn)
+
+# Прогнозирование по GRU
+gru = gru_model((time_steps, 1))
+y_pred_gru = train_and_predict(gru, X_train, X_test, y_train, y_test)
+y_pred_gru = scaler.inverse_transform(y_pred_gru)
+
+# Прогнозирование по Transformer
+transformer = build_transformer_model((time_steps, 1))
+y_pred_transformer = train_and_predict(transformer, X_train, X_test, y_train, y_test)
+y_pred_transformer = scaler.inverse_transform(y_pred_transformer)
+
+# Прогнозирование по фактическим данным
+y_test_inverse = scaler.inverse_transform(y_test.reshape(-1, 1))
+
+# Подсчет MAPE для каждой модели
+mape_sarima = mean_absolute_percentage_error(y_test_inverse, y_pred_sarima)
+mape_cnn = mean_absolute_percentage_error(y_test_inverse, y_pred_cnn)
+mape_gru = mean_absolute_percentage_error(y_test_inverse, y_pred_gru)
+mape_transformer = mean_absolute_percentage_error(y_test_inverse, y_pred_transformer)
+
+# Вывод результатов
+print(f"MAPE SARIMA: {mape_sarima}")
+print(f"MAPE CNN: {mape_cnn}")
+print(f"MAPE GRU: {mape_gru}")
+print(f"MAPE Transformer: {mape_transformer}")
+
+# Визуализация предсказаний каждой модели
+plt.plot(y_test_inverse, label='Actual', color='black')
+plt.plot(y_pred_sarima, label='SARIMA')
+plt.plot(y_pred_cnn, label='CNN')
+plt.plot(y_pred_gru, label='GRU')
+plt.plot(y_pred_transformer, label='Transformer')
+plt.title('Temperature Prediction - Model Comparison')
+plt.legend()
+plt.show()
